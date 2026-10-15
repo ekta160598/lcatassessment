@@ -9,3 +9,4 @@ rasterio
 matplotlib
 rasterstats
 streamlit-plotly-events
+earthengine-api
