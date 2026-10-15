@@ -1537,10 +1537,77 @@ def get_map_center(selected_district: str, filtered_geo: pd.DataFrame):
     return 21.0, 81.0, 6
 
 
+# -----------------------------------------------------------------------------
+# LIVE NDVI LAYER (Google Earth Engine)
+# Shows Sentinel-2 NDVI on the map when the NDVI toggle is on
+# and a district is selected.
+# -----------------------------------------------------------------------------
+
+NDVI_START, NDVI_END = "2025-01-01", "2025-12-31"
+
+
+@st.cache_resource
+def init_gee() -> bool:
+    try:
+        info = dict(st.secrets["gee"])
+        creds = ee.ServiceAccountCredentials(
+            info["client_email"], key_data=json.dumps(info)
+        )
+        ee.Initialize(creds, project=info["project_id"])
+        return True
+    except Exception as exc:
+        st.warning(f"Google Earth Engine could not be initialised: {exc}")
+        return False
+
+
+def _mask_s2(img):
+    scl = img.select("SCL")
+    ok = (scl.neq(3).And(scl.neq(8)).And(scl.neq(9))
+             .And(scl.neq(10)).And(scl.neq(11)))
+    return img.updateMask(ok)
+
+
+def _get_region(state: str, district: str):
+    fc = (ee.FeatureCollection("FAO/GAUL/2015/level2")
+            .filter(ee.Filter.eq("ADM1_NAME", state))
+            .filter(ee.Filter.eq("ADM2_NAME", district)))
+    if fc.size().getInfo() == 0:
+        return None
+    return fc.geometry()
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Requesting NDVI from Earth Engine...")
+def get_ndvi_tiles(state: str, district: str):
+    if not init_gee():
+        return None
+    geom = _get_region(state, district)
+    if geom is None:
+        return None
+
+    s2 = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(geom)
+            .filterDate(NDVI_START, NDVI_END)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))
+            .map(_mask_s2)
+            .map(lambda i: i.normalizedDifference(["B8", "B4"]).rename("NDVI")))
+
+    img = s2.median().clip(geom)
+    vis = {"min": 0.0, "max": 0.8,
+           "palette": ["#a50026", "#f46d43", "#fee08b",
+                       "#a6d96a", "#1a9850", "#006837"]}
+    url = img.getMapId(vis)["tile_fetcher"].url_format
+
+    ring = geom.bounds().getInfo()["coordinates"][0]
+    west, south = ring[0]
+    east, north = ring[2]
+    return url, [[south, west], [north, east]]
+
+
 def make_map(
     filtered_geo: pd.DataFrame,
     selected_district: str,
     basemap_choice: str,
+    ndvi_overlay=None,    
 ):
     center_lat, center_lng, zoom_start = get_map_center(
         selected_district, filtered_geo
@@ -1557,6 +1624,17 @@ def make_map(
         tiles=tile_dict.get(basemap_choice, "OpenStreetMap"),
         control_scale=True,
     )
+           
+    if ndvi_overlay is not None:
+        tile_url, bounds = ndvi_overlay
+        folium.TileLayer(
+            tiles=tile_url,
+            attr="Google Earth Engine · Copernicus Sentinel-2",
+            name="NDVI",
+            overlay=True,
+            opacity=0.8,
+        ).add_to(m)
+        m.fit_bounds(bounds)    
 
     for _, row in filtered_geo.iterrows():
         radius = max(6, min(20, int(max(1, row["totalDemand"]) * 0.35)))
