@@ -1634,7 +1634,39 @@ def make_map(
             overlay=True,
             opacity=0.8,
         ).add_to(m)
-        m.fit_bounds(bounds)    
+        m.fit_bounds(bounds)
+
+        legend_html = """
+        <div style="
+            position: fixed;
+            bottom: 28px;
+            left: 12px;
+            z-index: 9999;
+            background: rgba(252,251,246,0.95);
+            border: 1px solid #C9C2AC;
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-size: 11px;
+            color: #20281F;
+            width: 170px;
+        ">
+            <div style="font-weight:600; margin-bottom:5px;">NDVI (2025 median)</div>
+            <div style="
+                height: 10px;
+                border-radius: 3px;
+                background: linear-gradient(to right,
+                    #a50026, #f46d43, #fee08b, #a6d96a, #1a9850, #006837);
+            "></div>
+            <div style="display:flex; justify-content:space-between; margin-top:3px;">
+                <span>0.0</span><span>0.4</span><span>0.8</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; color:#4C5646; font-size:10px;">
+                <span>Sparse</span><span>Dense</span>
+            </div>
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
 
     for _, row in filtered_geo.iterrows():
         radius = max(6, min(20, int(max(1, row["totalDemand"]) * 0.35)))
