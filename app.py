@@ -1576,38 +1576,115 @@ def _get_region(state: str, district: str):
     return fc.geometry()
 
 
-@st.cache_data(ttl=6 * 3600, show_spinner="Requesting NDVI from Earth Engine...")
-def get_ndvi_tiles(state: str, district: str):
+GEE_LAYERS = {
+    "NDVI (Placeholder)": "ndvi",
+    "LULC (Placeholder)": "lulc",
+    "Soil (Placeholder)": "soil",
+    "DEM / Slope (Placeholder)": "slope",
+    "Rivers (Placeholder)": "water",
+}
+
+GEE_LEGENDS = {
+    "ndvi": {"type": "gradient", "title": "NDVI (2025 median)", "min": "0.0", "max": "0.8",
+             "palette": ["#a50026", "#f46d43", "#fee08b", "#a6d96a", "#1a9850", "#006837"]},
+    "slope": {"type": "gradient", "title": "Slope (degrees)", "min": "0", "max": "30+",
+              "palette": ["#ffffcc", "#fed976", "#fd8d3c", "#e31a1c", "#800026"]},
+    "soil": {"type": "gradient", "title": "Soil organic carbon (0-5 cm)", "min": "Low", "max": "High",
+             "palette": ["#fff7bc", "#fec44f", "#d95f0e", "#993404", "#662506"]},
+    "water": {"type": "gradient", "title": "Surface water occurrence (%)", "min": "0", "max": "100",
+              "palette": ["#c6dbef", "#6baed6", "#2171b5", "#08306b"]},
+    "lulc": {"type": "classes", "title": "Land cover (ESA WorldCover 2021)",
+             "classes": [("#006400", "Tree cover"), ("#ffbb22", "Shrubland"),
+                         ("#ffff4c", "Grassland"), ("#f096ff", "Cropland"),
+                         ("#fa0000", "Built-up"), ("#b4b4b4", "Bare / sparse"),
+                         ("#0064c8", "Water"), ("#0096a0", "Wetland")]},
+}
+
+
+def _build_layer(layer_key: str, geom):
+    if layer_key == "ndvi":
+        s2 = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                .filterBounds(geom)
+                .filterDate(NDVI_START, NDVI_END)
+                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))
+                .map(_mask_s2)
+                .map(lambda i: i.normalizedDifference(["B8", "B4"]).rename("NDVI")))
+        img = s2.median().clip(geom)
+        vis = {"min": 0.0, "max": 0.8, "palette": GEE_LEGENDS["ndvi"]["palette"]}
+    elif layer_key == "slope":
+        img = ee.Terrain.slope(ee.Image("USGS/SRTMGL1_003")).clip(geom)
+        vis = {"min": 0, "max": 30, "palette": GEE_LEGENDS["slope"]["palette"]}
+    elif layer_key == "soil":
+        img = (ee.Image("projects/soilgrids-isric/soc_mean")
+                 .select("soc_0-5cm_mean").clip(geom))
+        vis = {"min": 20, "max": 150, "palette": GEE_LEGENDS["soil"]["palette"]}
+    elif layer_key == "water":
+        occ = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence")
+        img = occ.updateMask(occ.gt(0)).clip(geom)
+        vis = {"min": 0, "max": 100, "palette": GEE_LEGENDS["water"]["palette"]}
+    elif layer_key == "lulc":
+        img = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").clip(geom)
+        vis = {}
+    else:
+        return None, None
+    return img, vis
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Requesting layer from Earth Engine...")
+def get_gee_tiles(layer_key: str, state: str, district: str):
     if not init_gee():
         return None
     geom = _get_region(state, district)
     if geom is None:
         return None
+    img, vis = _build_layer(layer_key, geom)
+    if img is None:
+        return None
 
-    s2 = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-            .filterBounds(geom)
-            .filterDate(NDVI_START, NDVI_END)
-            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))
-            .map(_mask_s2)
-            .map(lambda i: i.normalizedDifference(["B8", "B4"]).rename("NDVI")))
-
-    img = s2.median().clip(geom)
-    vis = {"min": 0.0, "max": 0.8,
-           "palette": ["#a50026", "#f46d43", "#fee08b",
-                       "#a6d96a", "#1a9850", "#006837"]}
     url = img.getMapId(vis)["tile_fetcher"].url_format
-
     ring = geom.bounds().getInfo()["coordinates"][0]
     west, south = ring[0]
     east, north = ring[2]
     return url, [[south, west], [north, east]]
 
 
+def _legend_html(layer_keys):
+    blocks = []
+    for k in layer_keys:
+        spec = GEE_LEGENDS[k]
+        if spec["type"] == "gradient":
+            grad = ", ".join(spec["palette"])
+            blocks.append(
+                f'<div style="margin-bottom:8px;">'
+                f'<div style="font-weight:600;margin-bottom:4px;">{spec["title"]}</div>'
+                f'<div style="height:10px;border-radius:3px;background:linear-gradient(to right,{grad});"></div>'
+                f'<div style="display:flex;justify-content:space-between;margin-top:3px;">'
+                f'<span>{spec["min"]}</span><span>{spec["max"]}</span></div></div>'
+            )
+        else:
+            rows = "".join(
+                f'<div style="display:flex;align-items:center;gap:6px;margin-top:2px;">'
+                f'<i style="width:10px;height:10px;background:{c};display:inline-block;"></i>{n}</div>'
+                for c, n in spec["classes"]
+            )
+            blocks.append(
+                f'<div style="margin-bottom:8px;">'
+                f'<div style="font-weight:600;margin-bottom:4px;">{spec["title"]}</div>{rows}</div>'
+            )
+    return (
+        '<div style="position:fixed;bottom:28px;left:12px;z-index:9999;'
+        'background:rgba(252,251,246,0.95);border:1px solid #C9C2AC;border-radius:6px;'
+        "padding:8px 10px;font-family:'IBM Plex Sans',sans-serif;font-size:11px;"
+        'color:#20281F;width:190px;max-height:300px;overflow-y:auto;">'
+        + "".join(blocks) + "</div>"
+    )
+
+
 def make_map(
     filtered_geo: pd.DataFrame,
     selected_district: str,
     basemap_choice: str,
-    ndvi_overlay=None,    
+    gee_layers=None,    
 ):
     center_lat, center_lng, zoom_start = get_map_center(
         selected_district, filtered_geo
@@ -1624,49 +1701,20 @@ def make_map(
         tiles=tile_dict.get(basemap_choice, "OpenStreetMap"),
         control_scale=True,
     )
-           
-    if ndvi_overlay is not None:
-        tile_url, bounds = ndvi_overlay
-        folium.TileLayer(
-            tiles=tile_url,
-            attr="Google Earth Engine · Copernicus Sentinel-2",
-            name="NDVI",
-            overlay=True,
-            opacity=0.8,
-        ).add_to(m)
-        m.fit_bounds(bounds)
 
-        legend_html = """
-        <div style="
-            position: fixed;
-            bottom: 28px;
-            left: 12px;
-            z-index: 9999;
-            background: rgba(252,251,246,0.95);
-            border: 1px solid #C9C2AC;
-            border-radius: 6px;
-            padding: 8px 10px;
-            font-family: 'IBM Plex Sans', sans-serif;
-            font-size: 11px;
-            color: #20281F;
-            width: 170px;
-        ">
-            <div style="font-weight:600; margin-bottom:5px;">NDVI (2025 median)</div>
-            <div style="
-                height: 10px;
-                border-radius: 3px;
-                background: linear-gradient(to right,
-                    #a50026, #f46d43, #fee08b, #a6d96a, #1a9850, #006837);
-            "></div>
-            <div style="display:flex; justify-content:space-between; margin-top:3px;">
-                <span>0.0</span><span>0.4</span><span>0.8</span>
-            </div>
-            <div style="display:flex; justify-content:space-between; color:#4C5646; font-size:10px;">
-                <span>Sparse</span><span>Dense</span>
-            </div>
-        </div>
-        """
-        m.get_root().html.add_child(folium.Element(legend_html))
+    if gee_layers:
+        for layer_key, tile_url, bounds in gee_layers:
+            folium.TileLayer(
+                tiles=tile_url,
+                attr="Google Earth Engine",
+                name=layer_key,
+                overlay=True,
+                opacity=0.8,
+            ).add_to(m)
+        m.fit_bounds(gee_layers[0][2])
+        m.get_root().html.add_child(
+            folium.Element(_legend_html([g[0] for g in gee_layers]))
+        )
 
     for _, row in filtered_geo.iterrows():
         radius = max(6, min(20, int(max(1, row["totalDemand"]) * 0.35)))
@@ -2328,21 +2376,27 @@ if dashboard_mode == "LCAT & GPDP":
             unsafe_allow_html=True,
         )
 
-        ndvi_overlay = None
-        if st.session_state.get("layer_NDVI (Placeholder)", False):
+        gee_layers = []
+        active = [v for k, v in GEE_LAYERS.items()
+                  if st.session_state.get(f"layer_{k}", False)]
+        if active:
             if selected_district == "All Districts":
-                st.info("Select a district to view the NDVI layer.")
+                st.info("Select a district to view the map layers.")
             else:
-                ndvi_overlay = get_ndvi_tiles(selected_state, selected_district)
-                if ndvi_overlay is None:
-                    st.warning(f"No NDVI layer found for {selected_district}.")
+                for key in active:
+                    result = get_gee_tiles(key, selected_state, selected_district)
+                    if result is None:
+                        st.warning(f"Could not load the {key} layer for {selected_district}.")
+                    else:
+                        gee_layers.append((key, result[0], result[1]))
 
         map_obj = make_map(
             filtered_geo,
             selected_district,
             st.session_state["basemap_choice"],
-            ndvi_overlay=ndvi_overlay,
+            gee_layers=gee_layers,
         )
+        
         st_folium(
             map_obj,
             use_container_width=True,
