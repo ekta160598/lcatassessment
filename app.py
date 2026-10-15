@@ -2328,10 +2328,20 @@ if dashboard_mode == "LCAT & GPDP":
             unsafe_allow_html=True,
         )
 
+        ndvi_overlay = None
+        if st.session_state.get("layer_NDVI (Placeholder)", False):
+            if selected_district == "All Districts":
+                st.info("Select a district to view the NDVI layer.")
+            else:
+                ndvi_overlay = get_ndvi_tiles(selected_state, selected_district)
+                if ndvi_overlay is None:
+                    st.warning(f"No NDVI layer found for {selected_district}.")
+
         map_obj = make_map(
             filtered_geo,
             selected_district,
             st.session_state["basemap_choice"],
+            ndvi_overlay=ndvi_overlay,
         )
         st_folium(
             map_obj,
