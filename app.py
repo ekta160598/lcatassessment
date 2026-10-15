@@ -1617,7 +1617,16 @@ def _build_layer(layer_key: str, geom):
     elif layer_key == "soil":
         img = (ee.Image("projects/soilgrids-isric/soc_mean")
                  .select("soc_0-5cm_mean").clip(geom))
-        vis = {"min": 20, "max": 150, "palette": GEE_LEGENDS["soil"]["palette"]}
+        stats = img.reduceRegion(
+            reducer=ee.Reducer.percentile([5, 95]),
+            geometry=geom,
+            scale=250,
+            maxPixels=1e9,
+            bestEffort=True,
+        ).getInfo()
+        lo = stats.get("soc_0-5cm_mean_p5", 20)
+        hi = stats.get("soc_0-5cm_mean_p95", 150)
+        vis = {"min": lo, "max": hi, "palette": GEE_LEGENDS["soil"]["palette"]}
     elif layer_key == "water":
         occ = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence")
         img = occ.updateMask(occ.gt(0)).clip(geom)
