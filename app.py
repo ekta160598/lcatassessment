@@ -10,6 +10,8 @@ import html
 from typing import Any, Dict, List, Optional
 from plotly.subplots import make_subplots
 import textwrap
+import json
+import ee
 
 # Optional Plotly click-event component. The dashboard remains usable if it is absent.
 try:
