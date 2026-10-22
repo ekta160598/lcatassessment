@@ -1732,11 +1732,11 @@ def _get_region(state: str, district: str):
 
 
 GEE_LAYERS = {
-    "NDVI (Placeholder)": "ndvi",
-    "LULC (Placeholder)": "lulc",
-    "Soil (Placeholder)": "soil",
-    "DEM / Slope (Placeholder)": "slope",
-    "Rivers (Placeholder)": "water",
+    "NDVI": "ndvi",
+    "LULC": "lulc",
+    "Soil": "soil",
+    "DEM / Slope": "slope",
+    "Rivers": "water",
 }
 
 GEE_LEGENDS = {
@@ -2590,8 +2590,8 @@ if dashboard_mode == "LCAT & GPDP":
         st.markdown("<div class='section-label' style='margin-top:0;'>Map layers</div>", unsafe_allow_html=True)
 
         # Placeholder controls only. They do not invent or draw unsupported data.
-        for label in ["LULC (Placeholder)", "NDVI (Placeholder)", "Soil (Placeholder)",
-                      "DEM / Slope (Placeholder)", "Rivers (Placeholder)", "LCAT choropleth"]:
+        for label in ["LULC", "NDVI", "Soil",
+                      "DEM / Slope", "Rivers", "LCAT choropleth"]:
             st.toggle(label, value=(label == "LCAT choropleth"), key=f"layer_{label}")
 
         st.markdown("<div class='section-label'>Filter priority actions</div>", unsafe_allow_html=True)
