@@ -1317,12 +1317,32 @@ def get_vegetation_condition_record(
         & (veg_block == block)
         & (veg_village == village)
     ]
-
+    # First priority: exact match for all four geographic fields.
     if len(full) == 1:
         return full.iloc[0]
 
-    return None
+    # Second priority: match State + Village if that combination
+    # identifies exactly one record in the vegetation dataset.
+    state_village = df_vegetation[
+        (veg_state == state)
+        & (veg_village == village)
+    ]
 
+    if len(state_village) == 1:
+        return state_village.iloc[0]
+
+    # Final fallback: match Village only if its name is unique
+    # throughout the vegetation dataset.
+    village_only = df_vegetation[
+        veg_village == village
+    ]
+
+    if len(village_only) == 1:
+        return village_only.iloc[0]
+
+    # Do not guess when no unique match exists.
+    return None
+        
 # -----------------------------------------------------------------------------
 # WATER / HYDROLOGICAL CONDITION DATA
 # water_condition_overall is already normalized to a 0-1 condition score.
